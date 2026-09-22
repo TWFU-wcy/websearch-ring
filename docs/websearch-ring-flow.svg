@@ -1,0 +1,157 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="1580" viewBox="0 0 760 1580" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+  <rect width="760" height="1580" fill="#1a1a1a"/>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 1.5 L 9 5 L 0 8.5" fill="none" stroke="#999" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+
+  <text x="380" y="34" text-anchor="middle" font-size="16" font-weight="600" fill="#f0f0f0">websearch-ring · web_search 调用流程</text>
+  <text x="380" y="56" text-anchor="middle" font-size="12" fill="#888">命中缓存不写缓存 · 失败也走 render · 并发只共享不重复入环</text>
+
+  <!-- 1 -->
+  <rect x="230" y="76" width="300" height="48" rx="4" fill="#222" stroke="#666" stroke-width="1.5"/>
+  <text x="380" y="105" text-anchor="middle" font-size="15" fill="#f0f0f0">tools/call web_search</text>
+  <line x1="380" y1="124" x2="380" y2="156" stroke="#999" stroke-width="1.5" marker-end="url(#a)"/>
+
+  <!-- 2 -->
+  <rect x="200" y="160" width="360" height="64" rx="4" fill="#222" stroke="#666" stroke-width="1.5"/>
+  <text x="380" y="186" text-anchor="middle" font-size="15" fill="#f0f0f0">参数校验</text>
+  <text x="380" y="208" text-anchor="middle" font-size="13" fill="#ccc">query 必填 · numResults 默认 8，钳制 1–20</text>
+  <line x1="380" y1="224" x2="380" y2="256" stroke="#999" stroke-width="1.5" marker-end="url(#a)"/>
+
+  <!-- key -->
+  <rect x="220" y="260" width="320" height="44" rx="4" fill="#222" stroke="#666" stroke-width="1.5"/>
+  <text x="380" y="287" text-anchor="middle" font-size="14" fill="#f0f0f0">cacheKey = 小写query::count · TTL 默认 20min</text>
+  <line x1="380" y1="304" x2="380" y2="336" stroke="#999" stroke-width="1.5" marker-end="url(#a)"/>
+
+  <!-- cache diamond -->
+  <polygon points="380,340 540,410 380,480 220,410" fill="#222" stroke="#666" stroke-width="1.5"/>
+  <text x="380" y="404" text-anchor="middle" font-size="15" fill="#f0f0f0">TTL 缓存命中?</text>
+  <text x="380" y="426" text-anchor="middle" font-size="12" fill="#999">cacheGet(key)</text>
+
+  <!-- YES cache: direct to render, NO cacheSet -->
+  <line x1="220" y1="410" x2="120" y2="410" stroke="#999" stroke-width="1.5"/>
+  <line x1="120" y1="410" x2="120" y2="1288" stroke="#999" stroke-width="1.5"/>
+  <line x1="120" y1="1288" x2="250" y2="1288" stroke="#999" stroke-width="1.5" marker-end="url(#a)"/>
+  <rect x="150" y="378" width="44" height="26" rx="4" fill="#333" stroke="#555"/>
+  <text x="172" y="397" text-anchor="middle" font-size="14" fill="#f0f0f0">是</text>
+  <rect x="78" y="520" width="84" height="72" rx="4" fill="#1e3a2a" stroke="#3d8b5f" stroke-width="1.5"/>
+  <text x="120" y="548" text-anchor="middle" font-size="13" fill="#b8e0c8">直接返回</text>
+  <text x="120" y="568" text-anchor="middle" font-size="12" fill="#8fcaa8">attempts: []</text>
+  <text x="120" y="586" text-anchor="middle" font-size="12" fill="#8fcaa8">cached: true</text>
+  <text x="120" y="620" text-anchor="middle" font-size="11" fill="#6a9">不写缓存</text>
+
+  <!-- NO -->
+  <line x1="380" y1="480" x2="380" y2="520" stroke="#999" stroke-width="1.5" marker-end="url(#a)"/>
+  <rect x="394" y="488" width="40" height="26" rx="4" fill="#333" stroke="#555"/>
+  <text x="414" y="507" text-anchor="middle" font-size="14" fill="#f0f0f0">否</text>
+
+  <!-- inflight diamond -->
+  <polygon points="380,524 560,600 380,676 200,600" fill="#222" stroke="#666" stroke-width="1.5"/>
+  <text x="380" y="592" text-anchor="middle" font-size="15" fill="#f0f0f0">同一 key 正在跑?</text>
+  <text x="380" y="614" text-anchor="middle" font-size="12" fill="#999">inflight 合并</text>
+
+  <!-- YES share -->
+  <line x1="200" y1="600" x2="150" y2="600" stroke="#999" stroke-width="1.5"/>
+  <line x1="150" y1="600" x2="150" y2="720" stroke="#999" stroke-width="1.5" marker-end="url(#a)"/>
+  <rect x="128" y="638" width="44" height="26" rx="4" fill="#333" stroke="#555"/>
+  <text x="150" y="657" text-anchor="middle" font-size="14" fill="#f0f0f0">是</text>
+  <rect x="50" y="724" width="200" height="64" rx="4" fill="#222" stroke="#666" stroke-width="1.5"/>
+  <text x="150" y="752" text-anchor="middle" font-size="14" fill="#f0f0f0">await 同一 promise</text>
+  <text x="150" y="774" text-anchor="middle" font-size="13" fill="#ccc">coalesced: true · 省额度</text>
+  <!-- share joins render via left, not cacheSet: original path writes cache -->
+  <line x1="150" y1="788" x2="150" y2="1288" stroke="#999" stroke-width="1.5"/>
+  <line x1="150" y1="1288" x2="250" y2="1288" stroke="#999" stroke-width="1.5" marker-end="url(#a)"/>
+  <text x="150" y="820" text-anchor="middle" font-size="11" fill="#888">缓存由主请求写入</text>
+
+  <!-- NO ring -->
+  <line x1="380" y1="676" x2="380" y2="720" stroke="#999" stroke-width="1.5"/>
+  <line x1="380" y1="720" x2="500" y2="720" stroke="#999" stroke-width="1.5"/>
+  <line x1="500" y1="720" x2="500" y2="756" stroke="#999" stroke-width="1.5" marker-end="url(#a)"/>
+  <rect x="404" y="690" width="40" height="26" rx="4" fill="#333" stroke="#555"/>
+  <text x="424" y="709" text-anchor="middle" font-size="14" fill="#f0f0f0">否</text>
+
+  <rect x="400" y="760" width="200" height="48" rx="4" fill="#222" stroke="#666" stroke-width="1.5"/>
+  <text x="500" y="789" text-anchor="middle" font-size="15" fill="#f0f0f0">进入 runSearch 轮转环</text>
+  <line x1="500" y1="808" x2="500" y2="840" stroke="#999" stroke-width="1.5" marker-end="url(#a)"/>
+
+  <!-- Exa -->
+  <rect x="400" y="844" width="200" height="48" rx="4" fill="#222" stroke="#666" stroke-width="1.5"/>
+  <text x="500" y="873" text-anchor="middle" font-size="15" fill="#f0f0f0">Exa · keyless</text>
+
+  <!-- Exa success -> cacheSet -->
+  <path d="M 400 868 C 350 868 330 980 330 1080" fill="none" stroke="#999" stroke-width="1.5" marker-end="url(#a)"/>
+  <rect x="300" y="940" width="44" height="26" rx="4" fill="#333" stroke="#555"/>
+  <text x="322" y="959" text-anchor="middle" font-size="13" fill="#f0f0f0">成功</text>
+
+  <line x1="500" y1="892" x2="500" y2="928" stroke="#999" stroke-width="1.5" marker-end="url(#a)"/>
+  <rect x="516" y="896" width="88" height="26" rx="4" fill="#333" stroke="#555"/>
+  <text x="560" y="915" text-anchor="middle" font-size="13" fill="#f0f0f0">失败/限流</text>
+
+  <!-- Tavily -->
+  <rect x="400" y="932" width="200" height="48" rx="4" fill="#222" stroke="#666" stroke-width="1.5"/>
+  <text x="500" y="961" text-anchor="middle" font-size="15" fill="#f0f0f0">Tavily · keyless</text>
+
+  <path d="M 400 956 C 360 956 345 1020 345 1080" fill="none" stroke="#999" stroke-width="1.5" marker-end="url(#a)"/>
+  <rect x="312" y="1000" width="44" height="26" rx="4" fill="#333" stroke="#555"/>
+  <text x="334" y="1019" text-anchor="middle" font-size="13" fill="#f0f0f0">成功</text>
+
+  <line x1="500" y1="980" x2="500" y2="1016" stroke="#999" stroke-width="1.5" marker-end="url(#a)"/>
+  <rect x="516" y="984" width="60" height="26" rx="4" fill="#333" stroke="#555"/>
+  <text x="546" y="1003" text-anchor="middle" font-size="13" fill="#f0f0f0">失败</text>
+
+  <!-- Bing -->
+  <rect x="400" y="1020" width="200" height="48" rx="4" fill="#222" stroke="#666" stroke-width="1.5"/>
+  <text x="500" y="1049" text-anchor="middle" font-size="15" fill="#f0f0f0">Bing · HTML 抓取</text>
+
+  <path d="M 400 1044 C 370 1044 360 1070 360 1080" fill="none" stroke="#999" stroke-width="1.5" marker-end="url(#a)"/>
+  <rect x="318" y="1054" width="44" height="26" rx="4" fill="#333" stroke="#555"/>
+  <text x="340" y="1073" text-anchor="middle" font-size="13" fill="#f0f0f0">成功</text>
+
+  <!-- all fail -->
+  <path d="M 600 1044 L 660 1044 L 660 1180 L 560 1180" fill="none" stroke="#999" stroke-width="1.5" marker-end="url(#a)"/>
+  <rect x="612" y="1080" width="72" height="26" rx="4" fill="#333" stroke="#555"/>
+  <text x="648" y="1099" text-anchor="middle" font-size="13" fill="#f0f0f0">全失败</text>
+
+  <rect x="420" y="1156" width="240" height="52" rx="4" fill="#2a1e1e" stroke="#a66" stroke-width="1.5"/>
+  <text x="540" y="1178" text-anchor="middle" font-size="14" fill="#f0f0f0">vendor: null + attempts[]</text>
+  <text x="540" y="1196" text-anchor="middle" font-size="12" fill="#caa">不写缓存</text>
+
+  <!-- cacheSet only on vendor success -->
+  <rect x="240" y="1084" width="200" height="52" rx="4" fill="#1e3a2a" stroke="#3d8b5f" stroke-width="1.5"/>
+  <text x="340" y="1106" text-anchor="middle" font-size="14" fill="#f0f0f0">cacheSet 写入缓存</text>
+  <text x="340" y="1124" text-anchor="middle" font-size="12" fill="#8fcaa8">仅厂商成功时</text>
+
+  <!-- success path to render -->
+  <line x1="340" y1="1136" x2="340" y2="1240" stroke="#999" stroke-width="1.5"/>
+  <line x1="340" y1="1240" x2="300" y2="1240" stroke="#999" stroke-width="1.5"/>
+  <line x1="300" y1="1240" x2="300" y2="1264" stroke="#999" stroke-width="1.5" marker-end="url(#a)"/>
+  <text x="360" y="1210" font-size="12" fill="#8fcaa8">cached:false</text>
+
+  <!-- fail path to render -->
+  <line x1="540" y1="1208" x2="540" y2="1240" stroke="#999" stroke-width="1.5"/>
+  <line x1="540" y1="1240" x2="480" y2="1240" stroke="#999" stroke-width="1.5"/>
+  <line x1="480" y1="1240" x2="480" y2="1264" stroke="#999" stroke-width="1.5" marker-end="url(#a)"/>
+
+  <!-- inflight clear note -->
+  <rect x="200" y="1248" width="360" height="0" fill="none"/>
+
+  <!-- render -->
+  <rect x="250" y="1268" width="280" height="72" rx="4" fill="#222" stroke="#888" stroke-width="1.5"/>
+  <text x="390" y="1294" text-anchor="middle" font-size="15" fill="#f0f0f0">render() 组装文本</text>
+  <text x="390" y="1314" text-anchor="middle" font-size="12" fill="#ccc">首行: N results (via vendor[, cached|shared…])</text>
+  <text x="390" y="1332" text-anchor="middle" font-size="12" fill="#ccc">有 attempts 则 Note · 失败则 Attempts 列表</text>
+
+  <line x1="390" y1="1340" x2="390" y2="1376" stroke="#999" stroke-width="1.5" marker-end="url(#a)"/>
+
+  <!-- JSON-RPC -->
+  <rect x="240" y="1380" width="300" height="64" rx="4" fill="#222" stroke="#666" stroke-width="1.5"/>
+  <text x="390" y="1406" text-anchor="middle" font-size="15" fill="#f0f0f0">JSON-RPC tools/call 结果</text>
+  <text x="390" y="1428" text-anchor="middle" font-size="13" fill="#ccc">isError = !vendor（全失败为 true）</text>
+
+  <!-- footer notes -->
+  <text x="380" y="1476" text-anchor="middle" font-size="12" fill="#777">修正: ① 缓存命中不 cacheSet ② 全失败仍进 render ③ coalesced 不单独入环 ④ 仅成功 cacheSet</text>
+  <text x="380" y="1500" text-anchor="middle" font-size="12" fill="#777">依据: index.js search/runSearch/render · 本会话冷启动无 cached、复搜带 (via exa, cached) 验收</text>
+  <text x="380" y="1536" text-anchor="middle" font-size="11" fill="#555">websearch-ring · MCP stdio</text>
+</svg>

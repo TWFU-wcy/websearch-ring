@@ -11,7 +11,8 @@
     "index.js",
     "README.md",
     "LICENSE",
-    "smoke-test.mjs"
+    "smoke-test.mjs",
+    "docs"
   ],
   "scripts": {
     "start": "node index.js",

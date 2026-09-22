@@ -12,6 +12,10 @@
 
 首行标明实际来源（`via exa` / `tavily` / `bing`），以及是否命中缓存（`, cached`）或被并发合并（`, shared with a concurrent call`）。
 
+**调用流程：**
+
+![websearch-ring 调用流程](docs/websearch-ring-flow.png)
+
 ---
 
 ## 为什么需要它
@@ -97,27 +101,13 @@ claude mcp add websearch-ring -- node /absolute/path/to/websearch-ring/index.js
 
 ## 调用流程
 
-```text
-tools/call web_search
-        │
-        ▼
-  参数校验（query 必填，numResults ∈ 1–20）
-        │
-        ▼
-  TTL 缓存命中？ ──是──► 返回 (via …, cached)
-        │否
-        ▼
-  同一 query 正在跑？ ──是──► 共享那一次请求
-        │否
-        ▼
-  轮转环: Exa → 失败/限流 → Tavily → 失败 → Bing
-        │成功
-        ▼
-  写入缓存 → render() → JSON-RPC 返回
-        │全失败
-        ▼
-  返回每家失败原因（isError=true）
-```
+见文首流程图（`docs/websearch-ring-flow.png`）。要点：
+
+1. **优先级**：缓存命中 → inflight 合并 → 新跑轮转（不可颠倒）
+2. **缓存命中**：不写缓存、不续 TTL；`attempts: []` + `cached: true` 直接 `render`
+3. **仅厂商成功** 时 `cacheSet`；合并方与全失败都不写
+4. **全失败**：正常返回 `vendor: null` + `attempts`，仍走 `render`，`isError: true`
+5. **标记**：`cached` > `coalesced`（shared）> 空；有失败才出 Note 行
 
 ---
 
