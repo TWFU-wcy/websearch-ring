@@ -1,0 +1,36 @@
+{
+  "name": "websearch-ring",
+  "version": "1.0.0",
+  "description": "Multi-vendor web search MCP server with keyless-first rotation, automatic failover, TTL cache, and concurrent-request coalescing.",
+  "type": "module",
+  "bin": {
+    "websearch-ring": "./index.js"
+  },
+  "main": "./index.js",
+  "files": [
+    "index.js",
+    "README.md",
+    "LICENSE",
+    "mimo-mcp-snippet.jsonc",
+    "hermes-mcp-snippet.yaml",
+    "smoke-test.mjs"
+  ],
+  "scripts": {
+    "start": "node index.js",
+    "test": "node smoke-test.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "web-search",
+    "exa",
+    "tavily",
+    "bing",
+    "failover",
+    "keyless"
+  ],
+  "license": "MIT"
+}

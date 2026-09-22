@@ -252,7 +252,9 @@ async function search(query, count) {
   const key = cacheKey(query, count);
 
   const cached = cacheGet(key);
-  if (cached) return { ...cached, cached: true };
+  // render() reads result.attempts.length unconditionally; a cache hit never
+  // ran the vendor ring, so hand back an empty list rather than undefined.
+  if (cached) return { ...cached, attempts: [], cached: true };
 
   // Identical concurrent calls (subagent fan-outs) share one backend request.
   const pending = inflight.get(key);
@@ -383,6 +385,8 @@ async function handle(msg) {
 }
 
 const rl = readline.createInterface({ input: process.stdin, terminal: false });
+const pending = new Set();
+
 rl.on("line", (line) => {
   const trimmed = line.trim();
   if (!trimmed) return;
@@ -393,11 +397,19 @@ rl.on("line", (line) => {
     log("ignoring unparsable input line");
     return;
   }
-  handle(msg).catch((err) => {
-    log(`handler error: ${err?.stack || err}`);
-    if (msg?.id !== undefined && msg?.id !== null) fail(msg.id, -32603, String(err?.message || err));
-  });
+  const task = handle(msg)
+    .catch((err) => {
+      log(`handler error: ${err?.stack || err}`);
+      if (msg?.id !== undefined && msg?.id !== null) fail(msg.id, -32603, String(err?.message || err));
+    })
+    .finally(() => pending.delete(task));
+  pending.add(task);
 });
-rl.on("close", () => process.exit(0));
+
+// Clients that pipe input and close stdin immediately still need their replies
+// flushed, so wait for in-flight handlers instead of exiting at once.
+rl.on("close", () => {
+  Promise.allSettled([...pending]).then(() => process.exit(0));
+});
 
 log(`ready — vendors: ${VENDORS.join(" -> ")}`);

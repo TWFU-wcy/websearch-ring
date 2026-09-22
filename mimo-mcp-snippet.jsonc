@@ -1,17 +1,20 @@
 // ============================================================
-// MiMo Desktop / MiMoCode — MCP 配置片段
+// MiMo Desktop / MiMoCode — MCP 搜索环配置片段
 // ============================================================
 // 合并到: C:\Users\TWFU_wcy\.config\mimocode\mimocode.jsonc
-// 只加 "mcp" 这一段，其它已有字段（provider 等）保持不动。
+// 只加 "mcp" / "tools" / "permission" 三段，其它字段保持不动。
 //
 // 生效时机: MCP 不热加载 —— 需【新开一个对话】或重启引擎。
-// 也可在 Settings → MCP 里可视化添加。
 //
-// 注意: 该工具不受 provider 门控，切到 deepseek 等第三方模型依然可用。
+// 设计要点:
+//  1. server 名故意叫 searchring（不是 websearch），避免和内置工具撞名。
+//  2. timeout 必须显式写 30000：MCP 请求默认只有 5000ms，会截断轮转与故障转移。
+//  3. tools + permission 双保险关掉内置 websearch，
+//     这样 MiMo 模型也不会去走小米联网插件、不消耗插件额度。
 // ============================================================
 {
   "mcp": {
-    "websearch": {
+    "searchring": {
       "type": "local",
       "command": [
         "node",
@@ -20,18 +23,30 @@
       "environment": {
         // 轮转顺序：限流或失败时自动切下一家
         "WEBSEARCH_VENDORS": "exa,tavily,bing",
-        // 单家超时（毫秒）
-        "WEBSEARCH_TIMEOUT_MS": "12000",
+        // 单家超时（毫秒）。3 家 × 8s = 24s，须小于下面的 timeout
+        "WEBSEARCH_TIMEOUT_MS": "8000",
         // 结果缓存 TTL（毫秒），设为 0 关闭
         "WEBSEARCH_TTL_MS": "1200000",
         // 返回给模型的文本上限（字符）
         "WEBSEARCH_MAX_CHARS": "12000"
-        // 留空则走各家的 keyless 免费通道。
-        // 想提升上限再填自己的 key（填一个即可）：
+        // 留空则走各家 keyless 免费通道。
+        // 想提升上限再填自己的 key：
         // "EXA_API_KEY": "你的-exa-key",
         // "TAVILY_API_KEY": "tvly-你的-key"
       },
+      // 单次 MCP 请求超时，默认仅 5000 —— 必须放大
+      "timeout": 30000,
       "enabled": true
     }
+  },
+
+  // 内置 websearch 从工具列表移除：MiMo 模型下它走小米联网插件、烧额度
+  "tools": {
+    "websearch": false
+  },
+
+  // 双保险：完全访问权限下 tools 开关会被放开，但 permission 的 deny 依然生效
+  "permission": {
+    "websearch": "deny"
   }
 }
