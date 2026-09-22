@@ -12,10 +12,6 @@
 
 首行标明实际来源（`via exa` / `tavily` / `bing`），以及是否命中缓存（`, cached`）或被并发合并（`, shared with a concurrent call`）。
 
-**调用流程：**
-
-![websearch-ring 调用流程](docs/websearch-ring-flow.png)
-
 ---
 
 ## 为什么需要它
@@ -101,7 +97,11 @@ claude mcp add websearch-ring -- node /absolute/path/to/websearch-ring/index.js
 
 ## 调用流程
 
-见文首流程图（`docs/websearch-ring-flow.png`）。要点：
+<p align="center">
+  <img src="docs/websearch-ring-flow.png" alt="websearch-ring 调用流程" width="420">
+</p>
+
+要点：
 
 1. **优先级**：缓存命中 → inflight 合并 → 新跑轮转（不可颠倒）
 2. **缓存命中**：不写缓存、不续 TTL；`attempts: []` + `cached: true` 直接 `render`
