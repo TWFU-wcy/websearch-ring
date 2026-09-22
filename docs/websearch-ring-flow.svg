@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="760" height="1580" viewBox="0 0 760 1580" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
-  <rect width="760" height="1580" fill="#1a1a1a"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="1500" viewBox="0 0 760 1500" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+  <rect width="760" height="1500" fill="#1a1a1a"/>
   <defs>
     <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M 0 1.5 L 9 5 L 0 8.5" fill="none" stroke="#999" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
@@ -150,8 +150,5 @@
   <text x="390" y="1406" text-anchor="middle" font-size="15" fill="#f0f0f0">JSON-RPC tools/call 结果</text>
   <text x="390" y="1428" text-anchor="middle" font-size="13" fill="#ccc">isError = !vendor（全失败为 true）</text>
 
-  <!-- footer notes -->
-  <text x="380" y="1476" text-anchor="middle" font-size="12" fill="#777">修正: ① 缓存命中不 cacheSet ② 全失败仍进 render ③ coalesced 不单独入环 ④ 仅成功 cacheSet</text>
-  <text x="380" y="1500" text-anchor="middle" font-size="12" fill="#777">依据: index.js search/runSearch/render · 本会话冷启动无 cached、复搜带 (via exa, cached) 验收</text>
-  <text x="380" y="1536" text-anchor="middle" font-size="11" fill="#555">websearch-ring · MCP stdio</text>
+  <text x="380" y="1476" text-anchor="middle" font-size="11" fill="#555">websearch-ring · MCP stdio</text>
 </svg>
