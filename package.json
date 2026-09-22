@@ -11,8 +11,6 @@
     "index.js",
     "README.md",
     "LICENSE",
-    "mimo-mcp-snippet.jsonc",
-    "hermes-mcp-snippet.yaml",
     "smoke-test.mjs"
   ],
   "scripts": {
