@@ -1,0 +1,37 @@
+// ============================================================
+// MiMo Desktop / MiMoCode — MCP 配置片段
+// ============================================================
+// 合并到: C:\Users\TWFU_wcy\.config\mimocode\mimocode.jsonc
+// 只加 "mcp" 这一段，其它已有字段（provider 等）保持不动。
+//
+// 生效时机: MCP 不热加载 —— 需【新开一个对话】或重启引擎。
+// 也可在 Settings → MCP 里可视化添加。
+//
+// 注意: 该工具不受 provider 门控，切到 deepseek 等第三方模型依然可用。
+// ============================================================
+{
+  "mcp": {
+    "websearch": {
+      "type": "local",
+      "command": [
+        "node",
+        "C:/Users/TWFU_wcy/mcp-servers/websearch-ring/index.js"
+      ],
+      "environment": {
+        // 轮转顺序：限流或失败时自动切下一家
+        "WEBSEARCH_VENDORS": "exa,tavily,bing",
+        // 单家超时（毫秒）
+        "WEBSEARCH_TIMEOUT_MS": "12000",
+        // 结果缓存 TTL（毫秒），设为 0 关闭
+        "WEBSEARCH_TTL_MS": "1200000",
+        // 返回给模型的文本上限（字符）
+        "WEBSEARCH_MAX_CHARS": "12000"
+        // 留空则走各家的 keyless 免费通道。
+        // 想提升上限再填自己的 key（填一个即可）：
+        // "EXA_API_KEY": "你的-exa-key",
+        // "TAVILY_API_KEY": "tvly-你的-key"
+      },
+      "enabled": true
+    }
+  }
+}
