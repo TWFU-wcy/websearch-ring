@@ -2,7 +2,7 @@
 
 **多后端轮询 · 自动故障转移 · Keyless 优先** 的网页搜索 MCP Server。
 
-一份 `index.js`，零 npm 依赖，接到任意 MCP 客户端（MiMo Desktop、Claude Code、Cursor、Hermes…）即可让 Agent 稳定联网搜索——不绑模型、不绑厂商、不强制 API Key。
+一份 `index.js`，零 npm 依赖，接到任意 MCP 客户端（**Claude Code、Codex、Cursor、Windsurf、VS Code**，以及 MiMo Desktop、Hermes 等）即可让 Agent 稳定联网搜索——不绑模型、不绑厂商、不强制 API Key。
 
 ```text
 3 results for "杭州周末天气" (via exa, cached)
@@ -54,18 +54,38 @@ node smoke-test.mjs "杭州周末天气"
 
 ### 2. 接入 MCP 客户端
 
-#### MiMo Desktop / MiMoCode
+下面把 **Claude Code / Codex / Cursor** 等主流工具放在前面；MiMo、Hermes 作为补充示例在文末。  
+路径请改成你机器上的绝对路径（Windows 可用 `C:/...` 或 `C:\\...`）。
 
-合并 `mimo-mcp-snippet.jsonc` 中的 `mcp` / `tools` / `permission` 片段到  
-`~/.config/mimocode/mimocode.jsonc`（路径以你的机器为准），然后**新开会话或重启引擎**（MCP 不热加载）。
+公共环境变量（可按需删减）：
 
-要点：
+```json
+{
+  "WEBSEARCH_VENDORS": "exa,tavily,bing",
+  "WEBSEARCH_TIMEOUT_MS": "12000",
+  "WEBSEARCH_TTL_MS": "1200000",
+  "WEBSEARCH_MAX_CHARS": "12000"
+}
+```
 
-- server 名可用 `searchring`，避免与内置工具撞名
-- **`timeout` 建议 ≥ 30000**（默认 5000ms 会截断轮转）
-- 可用 `tools.websearch: false` + `permission.websearch: "deny"` 关掉内置 websearch，避免烧平台联网额度
+#### Claude Code
 
-#### Claude Code / Cursor 等
+**方式 A — CLI（推荐）**
+
+```bash
+claude mcp add websearch-ring -- node /absolute/path/to/websearch-ring/index.js
+```
+
+需要带环境变量时：
+
+```bash
+claude mcp add websearch-ring \
+  -e WEBSEARCH_VENDORS=exa,tavily,bing \
+  -e WEBSEARCH_TIMEOUT_MS=12000 \
+  -- node /absolute/path/to/websearch-ring/index.js
+```
+
+**方式 B — 项目配置** `.mcp.json`（与项目根目录同级）
 
 ```json
 {
@@ -84,7 +104,121 @@ node smoke-test.mjs "杭州周末天气"
 }
 ```
 
-#### Hermes
+用户级则写入 `~/.claude.json` 的 `mcpServers`（或用 `claude mcp add --scope user …`）。
+
+#### Codex CLI
+
+编辑 `~/.codex/config.toml`（Windows：`%USERPROFILE%\.codex\config.toml`）：
+
+```toml
+[mcp_servers.websearch-ring]
+command = "node"
+args = ["/absolute/path/to/websearch-ring/index.js"]
+
+[mcp_servers.websearch-ring.env]
+WEBSEARCH_VENDORS = "exa,tavily,bing"
+WEBSEARCH_TIMEOUT_MS = "12000"
+WEBSEARCH_TTL_MS = "1200000"
+WEBSEARCH_MAX_CHARS = "12000"
+```
+
+重启 Codex 会话后，工具会以 `websearch-ring` 服务器暴露的 `web_search` 出现。
+
+#### Cursor
+
+项目级 `.cursor/mcp.json`，或用户级 `~/.cursor/mcp.json`：
+
+```json
+{
+  "mcpServers": {
+    "websearch-ring": {
+      "command": "node",
+      "args": ["/absolute/path/to/websearch-ring/index.js"],
+      "env": {
+        "WEBSEARCH_VENDORS": "exa,tavily,bing",
+        "WEBSEARCH_TIMEOUT_MS": "12000",
+        "WEBSEARCH_TTL_MS": "1200000",
+        "WEBSEARCH_MAX_CHARS": "12000"
+      }
+    }
+  }
+}
+```
+
+在 Cursor **Settings → MCP** 中应能看到该 server 与 `web_search` 工具。
+
+#### Windsurf
+
+`~/.codeium/windsurf/mcp_config.json`（或 IDE 内 MCP 设置），结构同上：`mcpServers.websearch-ring`。
+
+#### VS Code（Copilot / Chat MCP）
+
+工作区 `.vscode/mcp.json`（较新格式用 `servers` 键）：
+
+```json
+{
+  "servers": {
+    "websearch-ring": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["/absolute/path/to/websearch-ring/index.js"],
+      "env": {
+        "WEBSEARCH_VENDORS": "exa,tavily,bing",
+        "WEBSEARCH_TIMEOUT_MS": "12000"
+      }
+    }
+  }
+}
+```
+
+若你的 VS Code 版本仍用 `mcpServers`，改键名即可，内容不变。
+
+#### 通用 `mcpServers` JSON（Claude Desktop 等）
+
+Claude Desktop：`claude_desktop_config.json`  
+（Windows：`%APPDATA%\Claude\claude_desktop_config.json`；macOS：`~/Library/Application Support/Claude/claude_desktop_config.json`）
+
+```json
+{
+  "mcpServers": {
+    "websearch-ring": {
+      "command": "node",
+      "args": ["/absolute/path/to/websearch-ring/index.js"],
+      "env": {
+        "WEBSEARCH_VENDORS": "exa,tavily,bing",
+        "WEBSEARCH_TIMEOUT_MS": "12000",
+        "WEBSEARCH_TTL_MS": "1200000",
+        "WEBSEARCH_MAX_CHARS": "12000"
+      }
+    }
+  }
+}
+```
+
+改完需 **完全退出并重启** Claude Desktop。
+
+#### 其它客户端
+
+只要支持 **stdio + JSON-RPC MCP**，形式都是：
+
+```text
+command: node
+args:    [/absolute/path/to/websearch-ring/index.js]
+env:     见上表
+```
+
+#### 补充：MiMo Desktop / MiMoCode
+
+合并 `mimo-mcp-snippet.jsonc` 中的 `mcp` / `tools` / `permission` 片段到  
+`~/.config/mimocode/mimocode.jsonc`（路径以你的机器为准），然后**新开会话或重启引擎**（MCP 不热加载）。
+
+要点：
+
+- server 名可用 `searchring`，避免与内置工具撞名
+- **`timeout` 建议 ≥ 30000**（默认 5000ms 会截断轮转）
+- 可用 `tools.websearch: false` + `permission.websearch: "deny"` 关掉内置 websearch，避免烧平台联网额度
+
+#### 补充：Hermes
 
 见 `hermes-mcp-snippet.yaml`（顶层键为 `mcp_servers`）。
 
