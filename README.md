@@ -143,19 +143,6 @@ tools/call web_search
 
 ---
 
-## 仓库里有什么
-
-| 文件 | 说明 |
-|------|------|
-| `index.js` | MCP 服务本体 |
-| `README.md` | 本文 |
-| `LICENSE` | MIT |
-| `package.json` | 元数据 |
-| `.gitignore` | 忽略规则 |
-| `smoke-test.mjs` | 冒烟测试 |
-
----
-
 ## 许可证
 
 MIT
