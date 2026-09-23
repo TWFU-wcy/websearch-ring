@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Syntax check
+        run: |
+          node --check index.js
+          node --check smoke-test.mjs
+
+      - name: Smoke test (stdio MCP)
+        env:
+          # smoke-test waits then prints initialize / tools / search results
+          WAIT_MS: "30000"
+          WEBSEARCH_TIMEOUT_MS: "10000"
+        run: node smoke-test.mjs "hello world"

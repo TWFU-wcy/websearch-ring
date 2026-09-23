@@ -1,5 +1,9 @@
 # websearch-ring
 
+[![CI](https://github.com/TWFU-wcy/websearch-ring/actions/workflows/ci.yml/badge.svg)](https://github.com/TWFU-wcy/websearch-ring/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/TWFU-wcy/websearch-ring)](https://github.com/TWFU-wcy/websearch-ring/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 **多后端轮询 · 自动故障转移 · Keyless 优先** 的网页搜索 MCP Server。
 
 一份 `index.js`，零 npm 依赖，接到任意支持 **stdio MCP** 的客户端即可稳定联网搜索——不绑模型、不绑厂商、不强制 API Key。
