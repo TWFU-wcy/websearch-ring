@@ -5,11 +5,14 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
+  # Blocking: deterministic, offline, must be green.
   test:
+    name: Unit + process tests (offline)
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -23,10 +26,36 @@ jobs:
         run: |
           node --check index.js
           node --check smoke-test.mjs
+          node --check test/stdio-client.mjs
+          node --check test/unit.test.mjs
+          node --check test/server.test.mjs
 
-      - name: Smoke test (stdio MCP)
+      # Real assertions: config validation, entity decoding, cache bounds,
+      # cache-hit path, cancellation, JSON-RPC error codes, stdio process tests.
+      - name: Unit + process tests (no network)
+        run: npm test
+
+      - name: Offline stdio protocol smoke test (no network)
+        run: node smoke-test.mjs --offline
+
+  # Non-blocking: the keyless backends are flaky from CI runners (cn.bing.com in
+  # particular), so this job reports a result but never red-lights the build.
+  network-smoke:
+    name: Network smoke test (non-blocking)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Real search smoke test (asserts reply shape + cache hit)
         env:
-          # smoke-test waits then prints initialize / tools / search results
           WAIT_MS: "30000"
           WEBSEARCH_TIMEOUT_MS: "10000"
         run: node smoke-test.mjs "hello world"
