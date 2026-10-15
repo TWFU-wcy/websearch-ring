@@ -519,23 +519,37 @@ test("S1: an invalid timeout can never reach AbortSignal.timeout (no NaN demotio
   await assert.rejects(() => http("https://x.test", {}, { timeoutMs: Number.NaN }), /refusing to send request/);
 });
 
-test("S1: a validated legal timeout actually drives the abort signal", async () => {
+test("S1: a validated legal timeout is wired into the request as a real timeout signal", async () => {
   const cfg = parseConfig({ WEBSEARCH_TIMEOUT_MS: "25" });
   assert.equal(cfg.timeoutMs, 25);
+  let seenSignal;
   const engine = createSearchEngine({
     cache: createCache({ ttlMs: 0, maxEntries: 2 }),
     vendors: ["exa"],
     timeoutMs: cfg.timeoutMs,
-    fetchImpl: (url, options) =>
-      new Promise((_resolve, reject) => {
-        options.signal.addEventListener("abort", () => reject(Object.assign(new Error("aborted"), { name: "TimeoutError" })), {
-          once: true,
-        });
-      }),
+    fetchImpl: async (_url, options) => {
+      seenSignal = options.signal;
+      throw Object.assign(new Error("aborted"), { name: "TimeoutError" });
+    },
   });
   const result = await engine.search("slow", 3);
-  assert.equal(result.vendor, null);
+  assert.ok(seenSignal instanceof AbortSignal, "the vendor request must carry a timeout signal");
+  assert.equal(seenSignal.aborted, false, "a legal timeout must not abort the request up front");
   assert.deepEqual(result.attempts, [`exa: ${TIMEOUT_ERROR}`]);
+  assert.equal(result.vendor, null);
+});
+
+test("S1: the validated timeout deadline really fires", async () => {
+  const signal = buildRequestSignal(25, null);
+  // AbortSignal.timeout() uses an *unref'd* timer, so a promise waiting only on
+  // it can be dropped when the event loop drains (Node 20's test runner aborts
+  // the file in that case). Keep the loop ref'd for the duration of this test.
+  const fired = await new Promise((resolve) => {
+    signal.addEventListener("abort", () => resolve(true), { once: true });
+    setTimeout(() => resolve(signal.aborted), 1000);
+  });
+  assert.equal(fired, true);
+  assert.equal(signal.reason?.name, "TimeoutError");
 });
 
 test("abort beats a same-tick timeout: a cancelled request is never reported as a vendor failure", async () => {
