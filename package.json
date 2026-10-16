@@ -1,6 +1,6 @@
 {
   "name": "websearch-ring",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Multi-vendor web search MCP server with keyless-first rotation, automatic failover, bounded TTL cache, and concurrent-request coalescing.",
   "type": "module",
   "bin": {

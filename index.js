@@ -10,6 +10,7 @@
 //   WEBSEARCH_MAX_CHARS   result text cap in chars, default 12000
 //   WEBSEARCH_TTL_MS      cache TTL in ms, default 1200000 (0 disables)
 //   WEBSEARCH_CACHE_MAX   max cached queries (LRU-evicted), default 512
+//   WEBSEARCH_MAX_INFLIGHT max concurrent vendor requests (excess queue), default 16
 //   EXA_API_KEY           optional; keyless public endpoint used when unset
 //   TAVILY_API_KEY        optional; keyless access mode used when unset
 //   WEBSEARCH_UA          User-Agent for the Bing vendor
@@ -68,6 +69,7 @@ export const NUMERIC_SPECS = {
   WEBSEARCH_MAX_CHARS: { def: 12000, min: 1, max: 10000000 },
   WEBSEARCH_TTL_MS: { def: 1200000, min: 0, max: 2592000000 },
   WEBSEARCH_CACHE_MAX: { def: 512, min: 1, max: 100000 },
+  WEBSEARCH_MAX_INFLIGHT: { def: 16, min: 1, max: 256 },
 };
 
 export function parseIntegerVar(name, raw, spec) {
@@ -145,6 +147,7 @@ export function parseConfig(env = process.env) {
     maxChars: numbers.WEBSEARCH_MAX_CHARS,
     ttlMs: numbers.WEBSEARCH_TTL_MS,
     cacheMax: numbers.WEBSEARCH_CACHE_MAX,
+    maxInflight: numbers.WEBSEARCH_MAX_INFLIGHT,
     ua,
     exaApiKey,
     tavilyApiKey,
@@ -202,6 +205,45 @@ export function clampSnippet(s, n = 400) {
 // ---------------------------------------------------------------- http
 
 export const TIMEOUT_ERROR = "timeout";
+
+// Hard cap on a single upstream response body. An abnormal or compromised
+// upstream must not be able to exhaust memory (and it bounds the cost of the
+// regex-based Bing parser below).
+export const MAX_BODY_BYTES = 5 * 1024 * 1024;
+
+export async function readBody(res, maxBytes = MAX_BODY_BYTES) {
+  const len = Number(res.headers?.get?.("content-length"));
+  if (Number.isFinite(len) && len > maxBytes) {
+    throw new Error(`response body too large: content-length ${len} > ${maxBytes}`);
+  }
+  if (typeof res.text === "function") {
+    const body = await res.text();
+    if (body.length > maxBytes) throw new Error(`response body too large: ${body.length} > ${maxBytes} chars`);
+    if (body === "" && typeof res.json === "function") {
+      try { return JSON.stringify(await res.json()); } catch { /* fall through */ }
+    }
+    return body;
+  }
+  // Streaming fallback for real fetch Responses. A stub response with only
+  // json() (e.g. in tests) must still work; a body-less stub returns "".
+  if (res.body == null) {
+    if (typeof res.json === "function") return JSON.stringify(await res.json());
+    return "";
+  }
+  const reader = res.body?.getReader?.();
+  if (!reader) return "";
+  const chunks = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) throw new Error(`response body too large: > ${maxBytes} bytes`);
+    chunks.push(value);
+  }
+  const buf = Buffer.concat(chunks.map((c) => Buffer.from(c)));
+  return buf.toString("utf8");
+}
 
 export class CancelledError extends Error {
   constructor(message = "request cancelled by client") {
@@ -328,14 +370,19 @@ export function parseExaItems(text) {
 }
 
 export async function exa(query, count, ctx = {}) {
+  // The key travels in a header (not the URL) so it never lands in upstream
+  // access logs; the query param is kept as a fallback for endpoints that
+  // only understand `?exaApiKey=`.
   const url = ctx.exaApiKey
     ? `https://mcp.exa.ai/mcp?exaApiKey=${encodeURIComponent(ctx.exaApiKey)}`
     : "https://mcp.exa.ai/mcp";
+  const headers = { "Content-Type": "application/json", Accept: "application/json, text/event-stream" };
+  if (ctx.exaApiKey) headers["X-Exa-Api-Key"] = ctx.exaApiKey;
   const res = await http(
     url,
     {
       method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+      headers,
       body: JSON.stringify({
         jsonrpc: "2.0",
         id: 1,
@@ -349,7 +396,7 @@ export async function exa(query, count, ctx = {}) {
     ctx,
   );
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const body = await res.text();
+  const body = await readBody(res);
   const { text, format, detail } = extractExaText(body);
   const contentType = res.headers?.get?.("content-type") || "unknown";
   if (!text) {
@@ -386,7 +433,12 @@ export async function tavily(query, count, ctx = {}) {
     ctx,
   );
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const data = await res.json();
+  let data;
+  try {
+    data = JSON.parse(await readBody(res));
+  } catch (err) {
+    throw new Error(`invalid JSON from upstream: ${err.message}`);
+  }
   const items = parseTavilyResults(data);
   if (!items.length) throw new Error("no results");
   return items;
@@ -433,7 +485,7 @@ export async function bing(query, count, ctx = {}) {
     ctx,
   );
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const html = await res.text();
+  const html = await readBody(res);
   const items = parseBingResults(html, count);
   if (!items.length) throw new Error("no results (page layout may have changed)");
   return items;
@@ -528,6 +580,41 @@ function withAbort(promise, signal) {
   });
 }
 
+// FIFO semaphore: bounds how many distinct queries hit the vendors at once.
+// Excess callers queue instead of being rejected, so functionality is kept.
+export function createSemaphore(max) {
+  let active = 0;
+  const queue = [];
+  const tryNext = () => {
+    while (active < max && queue.length) {
+      const { resolve } = queue.shift();
+      active += 1;
+      resolve();
+    }
+  };
+  return {
+    acquire() {
+      if (active < max) {
+        active += 1;
+        return Promise.resolve();
+      }
+      return new Promise((resolve) => {
+        queue.push({ resolve });
+      });
+    },
+    release() {
+      active = Math.max(0, active - 1);
+      tryNext();
+    },
+    get active() {
+      return active;
+    },
+    get queued() {
+      return queue.length;
+    },
+  };
+}
+
 export function createSearchEngine({
   vendors = DEFAULT_VENDORS,
   registry = REGISTRY,
@@ -537,37 +624,44 @@ export function createSearchEngine({
   tavilyApiKey = null,
   ua = DEFAULT_UA,
   fetchImpl,
+  maxInflight = NUMERIC_SPECS.WEBSEARCH_MAX_INFLIGHT.def,
   log: logger = noop,
 } = {}) {
   const inflight = new Map();
+  const sem = createSemaphore(maxInflight);
   const vendorCtx = { timeoutMs, exaApiKey, tavilyApiKey, ua, fetchImpl };
 
   async function runSearch(query, count, signal) {
-    const key = cacheKey(query, count);
-    const attempts = [];
-    for (const name of vendors) {
-      const vendor = registry[name];
-      if (typeof vendor !== "function") {
-        logger(`unknown vendor in WEBSEARCH_VENDORS: ${name}`);
-        attempts.push(`${name}: unknown vendor`);
-        continue;
-      }
-      if (signal?.aborted) throw new CancelledError();
-      try {
-        const items = await vendor(query, count, { ...vendorCtx, signal });
+    await sem.acquire();
+    try {
+      const key = cacheKey(query, count);
+      const attempts = [];
+      for (const name of vendors) {
+        const vendor = registry[name];
+        if (typeof vendor !== "function") {
+          logger(`unknown vendor in WEBSEARCH_VENDORS: ${name}`);
+          attempts.push(`${name}: unknown vendor`);
+          continue;
+        }
         if (signal?.aborted) throw new CancelledError();
-        const value = { vendor: name, items };
-        cache.set(key, value);
-        logger(`vendor ${name} served "${shorten(query)}" (${items.length} results)`);
-        return { ...value, cached: false, attempts, key };
-      } catch (err) {
-        // A cancelled request must not fall through to the next vendor.
-        if (isCancelled(err, signal)) throw new CancelledError();
-        attempts.push(`${name}: ${err.message}`);
-        logger(`vendor ${name} failed (${err.message}), trying next`);
+        try {
+          const items = await vendor(query, count, { ...vendorCtx, signal });
+          if (signal?.aborted) throw new CancelledError();
+          const value = { vendor: name, items };
+          cache.set(key, value);
+          logger(`vendor ${name} served "${shorten(query)}" (${items.length} results)`);
+          return { ...value, cached: false, attempts, key };
+        } catch (err) {
+          // A cancelled request must not fall through to the next vendor.
+          if (isCancelled(err, signal)) throw new CancelledError();
+          attempts.push(`${name}: ${err.message}`);
+          logger(`vendor ${name} failed (${err.message}), trying next`);
+        }
       }
+      return { vendor: null, items: [], cached: false, attempts, key };
+    } finally {
+      sem.release();
     }
-    return { vendor: null, items: [], cached: false, attempts, key };
   }
 
   async function search(query, count, { signal } = {}) {
@@ -606,15 +700,38 @@ export function createSearchEngine({
     }
     entry.waiters += 1;
 
+    // Bounded concurrency: when the ring is saturated, queue the new query and
+    // surface a hint on stderr instead of piling more upstream requests on.
+    if (sem.active >= maxInflight) {
+      logger(
+        `concurrency limit reached (${maxInflight} in flight, ${sem.queued} queued) — queueing "${shorten(query)}"`,
+      );
+    }
+
     try {
-      const value = await withAbort(entry.promise, signal);
-      return owner ? value : { ...value, coalesced: true };
+      // Waiter-level cancellation: only *this* caller aborts when its own
+      // signal fires; the shared request keeps running for other waiters.
+      try {
+        const value = await withAbort(entry.promise, signal);
+        return owner ? value : { ...value, coalesced: true };
+      } catch (err) {
+        // The shared request died because every waiter left (including possibly
+        // this one). If *our* signal did not fire, we were collateral damage:
+        // re-run the search for this caller instead of failing it.
+        if (isCancelled(err) && !signal?.aborted) {
+          if (inflight.get(key) === entry) inflight.delete(key);
+          // Re-run the whole search() path so the retry is still coalesced and
+          // still bounded by the concurrency semaphore.
+          return search(query, count, { signal });
+        }
+        throw err;
+      }
     } finally {
       entry.waiters -= 1;
-      if (entry.waiters <= 0) {
+      if (entry.waiters <= 0 && !entry.settled) {
         // Nobody is waiting any more: stop the shared request so a cancelled
         // search cannot keep running (nor write its result into the cache).
-        if (!entry.settled) entry.controller.abort(new CancelledError("no waiters left"));
+        entry.controller.abort(new CancelledError("no waiters left"));
         if (inflight.get(key) === entry) inflight.delete(key);
       }
     }
@@ -680,7 +797,7 @@ export const TOOLS = [
         query: { type: "string", description: `Search query (1–${MAX_QUERY_CHARS} characters)` },
         numResults: {
           type: "integer",
-          description: `Number of results to return (default ${DEFAULT_NUM_RESULTS}, values are truncated and clamped to ${MIN_NUM_RESULTS}–${MAX_NUM_RESULTS})`,
+          description: `Number of results to return (default ${DEFAULT_NUM_RESULTS}; non-integers are truncated, values are clamped to ${MIN_NUM_RESULTS}–${MAX_NUM_RESULTS})`,
         },
       },
       required: ["query"],
@@ -859,7 +976,7 @@ export function startServer({ env = process.env, input = process.stdin, output =
     logger("every tools/call will return this error instead of searching; other MCP methods still work.");
   } else {
     logger(
-      `config: vendors=${config.vendors.join(" -> ")} timeoutMs=${config.timeoutMs} maxChars=${config.maxChars} ttlMs=${config.ttlMs} cacheMax=${config.cacheMax}`,
+      `config: vendors=${config.vendors.join(" -> ")} timeoutMs=${config.timeoutMs} maxChars=${config.maxChars} ttlMs=${config.ttlMs} cacheMax=${config.cacheMax} maxInflight=${config.maxInflight}`,
     );
   }
 
@@ -881,6 +998,7 @@ export function startServer({ env = process.env, input = process.stdin, output =
     exaApiKey: config.exaApiKey,
     tavilyApiKey: config.tavilyApiKey,
     ua: config.ua,
+    maxInflight: config.maxInflight,
     log: logger,
   });
   const handler = createMcpHandler({
@@ -922,8 +1040,6 @@ export function startServer({ env = process.env, input = process.stdin, output =
     pending.add(task);
   });
 
-  // Clients that pipe input and close stdin immediately still need their replies
-  // flushed, so wait for in-flight handlers instead of exiting at once.
   // Clients that pipe input and close stdin immediately (`... | node index.js`)
   // still need their replies flushed, so wait for in-flight handlers instead of
   // exiting (or aborting) at once.

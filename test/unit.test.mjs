@@ -9,6 +9,9 @@ import {
   NUMERIC_SPECS,
   VENDOR_NAMES,
   VERSION,
+  MAX_BODY_BYTES,
+  createSemaphore,
+  readBody,
   buildRequestSignal,
   cacheKey,
   CancelledError,
@@ -54,6 +57,7 @@ const makeRes = ({ status = 200, body = "", contentType = "application/json", pa
     headers: { get: (k) => (String(k).toLowerCase() === "content-type" ? contentType : null) },
     text: async () => text,
     json: async () => (payload !== undefined ? payload : JSON.parse(text)),
+    body: null,
   };
 };
 
@@ -125,7 +129,8 @@ test("config: every numeric variable rejects non-numbers, out-of-range and non-i
     assert.equal(c.ok, false, `${name}=${spec.max + 1} should be rejected`);
     assert.match(c.errors[0], /out of range/);
     // invalid values fall back to the documented default: deterministic, not NaN
-    assert.equal(c[name === "WEBSEARCH_MAX_CHARS" ? "maxChars" : name === "WEBSEARCH_TTL_MS" ? "ttlMs" : name === "WEBSEARCH_TIMEOUT_MS" ? "timeoutMs" : "cacheMax"], spec.def);
+    const fieldOf = { WEBSEARCH_MAX_CHARS: "maxChars", WEBSEARCH_TTL_MS: "ttlMs", WEBSEARCH_TIMEOUT_MS: "timeoutMs", WEBSEARCH_CACHE_MAX: "cacheMax", WEBSEARCH_MAX_INFLIGHT: "maxInflight" };
+    assert.equal(c[fieldOf[name]], spec.def);
   }
 });
 
@@ -843,6 +848,122 @@ test("handler: abortAll cancels every registered in-flight call", async () => {
   assert.deepEqual(sent, [], "aborted calls must not be answered");
   assert.equal(handler.pendingCalls.size, 0);
   assert.deepEqual(handler.abortAll(), []);
+});
+
+test("readBody: caps upstream bodies (content-length and streaming)", async () => {
+  assert.equal(MAX_BODY_BYTES, 5 * 1024 * 1024);
+
+  // content-length declared too large → reject before reading
+  const big = {
+    headers: { get: (k) => (k.toLowerCase() === "content-length" ? String(MAX_BODY_BYTES + 1) : null) },
+  };
+  await assert.rejects(() => readBody(big), /response body too large/);
+
+  // small body passes through
+  const ok = makeRes({ body: "hello" });
+  assert.equal(await readBody(ok), "hello");
+
+  // body larger than the cap (no content-length) → reject
+  const huge = makeRes({ body: "x".repeat(MAX_BODY_BYTES + 1) });
+  await assert.rejects(() => readBody(huge), /response body too large/);
+});
+
+test("exa: the API key is sent as a header AND in the URL (header-first, URL fallback)", async () => {
+  let seenUrl;
+  let seenHeaders;
+  const ok = makeRes({ body: contentFrame(EXA_TEXT, "json") });
+  await exa("q", 3, {
+    exaApiKey: "secret-key",
+    fetchImpl: async (url, options) => {
+      seenUrl = url;
+      seenHeaders = options.headers;
+      return ok;
+    },
+  });
+  assert.match(seenUrl, /exaApiKey=secret-key/, "URL fallback must be kept");
+  assert.equal(seenHeaders["X-Exa-Api-Key"], "secret-key", "key must also travel in a header");
+
+  // keyless: no header, no query param
+  let keylessHeaders;
+  await exa("q", 3, {
+    fetchImpl: async (url, options) => {
+      keylessHeaders = options.headers;
+      assert.equal(url, "https://mcp.exa.ai/mcp");
+      return ok;
+    },
+  });
+  assert.equal(keylessHeaders["X-Exa-Api-Key"], undefined);
+});
+
+test("semaphore: bounds concurrency, queues the excess, and drains in FIFO order", async () => {
+  const sem = createSemaphore(2);
+  const order = [];
+  const task = (name, ms) =>
+    sem.acquire().then(async () => {
+      order.push(`start:${name}`);
+      await new Promise((r) => setTimeout(r, ms));
+      order.push(`end:${name}`);
+      sem.release();
+    });
+  assert.equal(sem.active, 0);
+  await Promise.all([task("a", 20), task("b", 10), task("c", 1)]);
+  // only 2 ran concurrently: "c" must start after one of a/b finished
+  assert.ok(order.indexOf("start:c") > order.indexOf("start:a"));
+  assert.equal(sem.active, 0, "all slots released");
+  assert.equal(sem.queued, 0);
+});
+
+test("engine: exceeding maxInflight queues instead of rejecting, and logs the hint", async () => {
+  const logs = [];
+  let concurrent = 0;
+  let peak = 0;
+  const engine = createSearchEngine({
+    cache: createCache({ ttlMs: 0, maxEntries: 4 }),
+    vendors: ["exa"],
+    maxInflight: 2,
+    registry: {
+      exa: async (q) => {
+        concurrent += 1;
+        peak = Math.max(peak, concurrent);
+        await new Promise((r) => setTimeout(r, 10));
+        concurrent -= 1;
+        return [{ title: q, url: "", snippet: "" }];
+      },
+    },
+    log: (m) => logs.push(m),
+  });
+  // 5 distinct queries, cap 2
+  await Promise.all([1, 2, 3, 4, 5].map((i) => engine.search(`q${i}`, 1)));
+  assert.ok(peak <= 2, `peak concurrency ${peak} must be <= 2`);
+  assert.ok(logs.some((l) => /concurrency limit reached/.test(l)), "the queue hint must be logged");
+});
+
+test("G12: cancelling one coalesced waiter must not fail the other waiters", async () => {
+  let calls = 0;
+  let release;
+  const gate = new Promise((r) => (release = r));
+  const engine = createSearchEngine({
+    cache: createCache({ ttlMs: 60_000, maxEntries: 8 }),
+    vendors: ["exa"],
+    registry: {
+      exa: async () => {
+        calls += 1;
+        await gate;
+        return [{ title: "t", url: "u", snippet: "s" }];
+      },
+    },
+  });
+
+  const acA = new AbortController();
+  const a = engine.search("same", 3, { signal: acA.signal });
+  const b = engine.search("same", 3); // no signal
+  await new Promise((r) => setTimeout(r, 5));
+  acA.abort(); // cancel only A
+  await assert.rejects(a, (err) => isCancelled(err));
+  release();
+  const result = await b; // B must still succeed
+  assert.equal(result.vendor, "exa");
+  assert.equal(result.items.length, 1);
 });
 
 test("G8: importing index.js has no side effects", () => {

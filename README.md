@@ -38,6 +38,8 @@
 - ✅ **有界 TTL 缓存**：默认 20 分钟（`WEBSEARCH_TTL_MS`）+ 容量上限（`WEBSEARCH_CACHE_MAX`，默认 512 条，LRU 淘汰）+ 周期过期清理
 - ✅ **并发合并**：相同 query 并发只打一次后端
 - ✅ **支持取消**：`notifications/cancelled` 会真正中止上游请求，且不写入缓存
+- ✅ **并发有界**：`WEBSEARCH_MAX_INFLIGHT`（默认 16）限制同时打到厂商的请求数，超出排队而非拒绝
+- ✅ **响应体限长**：上游响应封顶 5MB，异常/被劫持的上游无法耗尽内存
 - ✅ **配置严格校验**：数值型变量非法时给出明确错误（变量名、收到的值、期望格式），不会被「全部厂商失败」吞掉
 - ✅ **可审计**：via 来源 + 失败 attempts + 截断标记 + stderr 上的缓存命中/容量诊断
 - ✅ **单文件**：约 870 行有效代码，无构建、无 dependencies
@@ -103,7 +105,8 @@ claude mcp add websearch-ring -- node /absolute/path/to/websearch-ring/index.js
 | `WEBSEARCH_TIMEOUT_MS` | `12000` | 整数 1–600000 | 单厂商超时 |
 | `WEBSEARCH_MAX_CHARS` | `12000` | 整数 1–10000000 | 返回文本上限 |
 | `WEBSEARCH_TTL_MS` | `1200000` | 整数 0–2592000000 | 缓存 TTL；`0` 关闭缓存 |
-| `WEBSEARCH_CACHE_MAX` | `512` | 整数 1–100000 | 缓存条目上限（超出按 LRU 淘汰），约 512 × 8KB ≈ 4MB |
+| `WEBSEARCH_CACHE_MAX` | `512` | 整数 1–100000 | 缓存条目上限（超出按 LRU 淘汰）；默认 512 条时约 512 × 8KB ≈ 4MB |
+| `WEBSEARCH_MAX_INFLIGHT` | `16` | 整数 1–256 | 同时进行的厂商请求数上限；超出的查询**排队等待**（stderr 提示），不报错 |
 | `EXA_API_KEY` | （空） | — | 空则 keyless |
 | `TAVILY_API_KEY` | （空） | — | 空则 keyless |
 | `WEBSEARCH_UA` | Chrome UA | 非空字符串 | Bing 抓取 UA |
@@ -135,7 +138,7 @@ websearch-ring is misconfigured, so no search was performed. Fix the environment
 2. **缓存命中**：不写缓存、不续 TTL；`attempts: []` + `cached: true` 直接 `render`，并在 stderr 打印 `cache hit for … (entries n/max)`（可观测性）
 3. **仅厂商成功** 时 `cacheSet`；合并方与全失败都不写
 4. **缓存有界**：超过 `WEBSEARCH_CACHE_MAX` 按 LRU 淘汰最久未用的条目（stderr 打印淘汰日志）；过期条目除了在访问时删除，还有 `unref()` 定时器（TTL/4，1–60 秒）周期清理，进程不会因此被拖住
-5. **取消**：`notifications/cancelled` 会 abort 对应请求的上游 fetch，清理 inflight 记录，**不写缓存也不回包**；stdin 关闭时同样中止所有在途请求
+5. **取消**：`notifications/cancelled` 会 abort 对应请求的上游 fetch，清理 inflight 记录，**不写缓存也不回包**；并发合并时**只有发起取消的调用方失败**，其余等待方继续拿到结果；stdin 关闭时**等待在途请求回包后再退出**（one-shot pipe 友好）
 6. **全失败**：正常返回 `vendor: null` + `attempts`，仍走 `render`，`isError: true`
 7. **标记**：`cached` > `coalesced`（shared）> 空；有失败才出 Note 行
 8. **配置错误**：直接返回配置错误文本（`isError: true`），不进入厂商轮转
@@ -149,7 +152,7 @@ websearch-ring is misconfigured, so no search was performed. Fix the environment
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `query` | string | ✅ | 搜索词，非空、去首尾空格、最长 1000 字符 |
-| `numResults` | integer | | 默认 8；小数取整、越界钳制到 1–20（`3.7`→`3`，`0`→`1`） |
+| `numResults` | integer | | 默认 8；**非整数向下取整**（`3.7`→`3`）、越界钳制到 1–20（`0`→`1`，`99`→`20`） |
 
 非法输入返回明确的 JSON-RPC 错误，而不是静默替换：
 

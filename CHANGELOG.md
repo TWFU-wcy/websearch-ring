@@ -4,6 +4,39 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-10-16
+
+Security/robustness hardening pass from a full source review.
+
+### Fixed
+
+- **Exa API key no longer travels in the URL alone.** It is now sent in the
+  `X-Exa-Api-Key` header *and* kept in the query string as a fallback, so the key
+  does not land in upstream access logs when the endpoint understands the header.
+- **Upstream response bodies are capped (DoS).** A new `readBody` helper enforces
+  a 5 MB limit (checked via `Content-Length` and by streaming) for all three
+  vendors, replacing unbounded `res.text()` / `res.json()` calls. An oversized
+  body surfaces as a normal vendor failure and the ring rotates on.
+- **Cancelling one coalesced waiter no longer fails the others.** When a shared
+  request is aborted because every waiter left, waiters whose own signal did not
+  fire are transparently retried instead of receiving the cancellation error.
+
+### Added
+
+- `WEBSEARCH_MAX_INFLIGHT` environment variable (default 16, range 1–256): bounds
+  how many distinct queries hit the vendors at once. Excess queries **queue**
+  (FIFO) instead of being rejected, and a `concurrency limit reached` hint is
+  logged to stderr when the ring is saturated.
+- `readBody`, `createSemaphore`, `MAX_BODY_BYTES` are exported for testing.
+- Tests for the body cap, the Exa header, the semaphore/concurrency bound, and
+  the coalesced-cancel retry path.
+
+### Changed
+
+- README documents the new variable, the body cap, and the corrected shutdown
+  behaviour (stdin close waits for in-flight replies rather than aborting them).
+- `numResults` non-integer truncation is now explicitly documented.
+
 ## [1.1.0] - 2026-10-15
 
 Hardening release: no more silently swallowed configuration errors, no unbounded
