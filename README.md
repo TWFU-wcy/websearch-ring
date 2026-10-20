@@ -128,9 +128,50 @@ websearch-ring is misconfigured, so no search was performed. Fix the environment
 
 ## 调用流程
 
-<p align="center">
-  <img src="docs/websearch-ring-flow.png" alt="websearch-ring 调用流程" width="420">
-</p>
+```mermaid
+flowchart TD
+    A["tools/call web_search"] --> B{"配置有效？"}
+    B -- "否" --> C["返回配置错误<br/>isError: true"]
+    B -- "是" --> D{"TTL 缓存命中？"}
+
+    D -- "是" --> E["attempts: []<br/>cached: true"]
+    E --> F["render 返回<br/>不写缓存、不续 TTL"]
+
+    D -- "否" --> G{"同一 key 正在请求？"}
+    G -- "是" --> H["await inflight Promise<br/>coalesced: true"]
+    H --> I["主请求写入缓存"]
+    I --> F
+
+    G -- "否" --> T{"Exa 请求成功？<br/>使用 EXA_API_KEY<br/>或 keyless"}
+    T -- "是" --> K["cacheSet<br/>render 结果<br/>via exa"]
+
+    T -- "失败/限流" --> L{"Tavily 请求成功？<br/>使用 TAVILY_API_KEY<br/>或 keyless"}
+    L -- "是" --> M["cacheSet<br/>render 结果<br/>via tavily"]
+
+    L -- "失败/限流" --> N{"Bing 抓取成功？"}
+    N -- "是" --> O["cacheSet<br/>render 结果<br/>via bing"]
+
+    N -- "全部失败" --> P["vendor: null<br/>attempts 列表<br/>不写缓存"]
+    P --> Q["render 返回<br/>isError: true"]
+
+    K --> R["JSON-RPC result"]
+    M --> R
+    O --> R
+    F --> R
+
+    C --> S(["结束"])
+    Q --> S
+    R --> S
+
+    style A fill:#2563eb,color:#fff,stroke:#1d4ed8
+    style C fill:#dc2626,color:#fff,stroke:#b91c1c
+    style Q fill:#dc2626,color:#fff,stroke:#b91c1c
+    style K fill:#16a34a,color:#fff,stroke:#15803d
+    style M fill:#16a34a,color:#fff,stroke:#15803d
+    style O fill:#16a34a,color:#fff,stroke:#15803d
+    style E fill:#f59e0b,color:#fff,stroke:#d97706
+    style H fill:#f59e0b,color:#fff,stroke:#d97706
+```
 
 要点：
 
@@ -186,7 +227,7 @@ CI 的阻塞 job 只跑前两项（离线、确定性，失败即红灯）；真
 3. **有界缓存 + 并发合并 + 可取消** 同时具备
 4. **via / attempts 透明**，配置错误不会被吞
 
-> **最轻量的高可用搜索环：一份 index.js，exa→tavily→bing 自动故障转移 + 有界 TTL 缓存 + 并发合并。**
+> **最轻量的高可用搜索环：一份 index.js，`WEBSEARCH_VENDORS` 自定义的厂商顺序自动故障转移 + 有界 TTL 缓存 + 并发合并。**
 
 ---
 
