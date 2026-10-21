@@ -126,52 +126,9 @@ websearch-ring is misconfigured, so no search was performed. Fix the environment
 
 ---
 
-## 调用流程
+## 架构与调用流程
 
-```mermaid
-flowchart TD
-    A["tools/call web_search"] --> B{"配置有效？"}
-    B -- "否" --> C["返回配置错误<br/>isError: true"]
-    B -- "是" --> D{"TTL 缓存命中？"}
-
-    D -- "是" --> E["attempts: []<br/>cached: true"]
-    E --> F["render 返回<br/>不写缓存、不续 TTL"]
-
-    D -- "否" --> G{"同一 key 正在请求？"}
-    G -- "是" --> H["await inflight Promise<br/>coalesced: true"]
-    H --> I["主请求写入缓存"]
-    I --> F
-
-    G -- "否" --> T{"Exa 请求成功？<br/>使用 EXA_API_KEY<br/>或 keyless"}
-    T -- "是" --> K["cacheSet<br/>render 结果<br/>via exa"]
-
-    T -- "失败/限流" --> L{"Tavily 请求成功？<br/>使用 TAVILY_API_KEY<br/>或 keyless"}
-    L -- "是" --> M["cacheSet<br/>render 结果<br/>via tavily"]
-
-    L -- "失败/限流" --> N{"Bing 抓取成功？"}
-    N -- "是" --> O["cacheSet<br/>render 结果<br/>via bing"]
-
-    N -- "全部失败" --> P["vendor: null<br/>attempts 列表<br/>不写缓存"]
-    P --> Q["render 返回<br/>isError: true"]
-
-    K --> R["JSON-RPC result"]
-    M --> R
-    O --> R
-    F --> R
-
-    C --> S(["结束"])
-    Q --> S
-    R --> S
-
-    style A fill:#2563eb,color:#fff,stroke:#1d4ed8
-    style C fill:#dc2626,color:#fff,stroke:#b91c1c
-    style Q fill:#dc2626,color:#fff,stroke:#b91c1c
-    style K fill:#16a34a,color:#fff,stroke:#15803d
-    style M fill:#16a34a,color:#fff,stroke:#15803d
-    style O fill:#16a34a,color:#fff,stroke:#15803d
-    style E fill:#f59e0b,color:#fff,stroke:#d97706
-    style H fill:#f59e0b,color:#fff,stroke:#d97706
-```
+![websearch-ring 架构图：MCP 客户端 → stdio → 处理器 → 搜索编排 → 厂商适配器](docs/websearch-ring-architecture.png)
 
 要点：
 
